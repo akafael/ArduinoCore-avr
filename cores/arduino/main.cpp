@@ -1,5 +1,6 @@
 /*
-  main.cpp - Main loop for Arduino sketches
+  main.cpp - Based on main.cpp for Arduino
+  Removed the loop, and call StartOS() instead.
   Copyright (c) 2005-2013 Arduino Team.  All right reserved.
 
   This library is free software; you can redistribute it and/or
@@ -18,6 +19,7 @@
 */
 
 #include <Arduino.h>
+#include "tpl_os_os.h" //AppModeType, OSDEFAULTAPPMODE
 
 // Declared weak in Arduino.h to allow user redefinitions.
 int atexit(void (* /*func*/ )()) { return 0; }
@@ -29,6 +31,15 @@ void initVariant() { }
 
 void setupUSB() __attribute__((weak));
 void setupUSB() { }
+static AppModeType __appMode = OSDEFAULTAPPMODE;
+
+/** insert a 'new' service to define the application mode
+ * for Arduino, as the StartOS() service is hidden
+ */
+void SetAppMode(AppModeType appMode)
+{
+	__appMode = appMode;
+}
 
 int main(void)
 {
@@ -42,10 +53,7 @@ int main(void)
 	
 	setup();
     
-	for (;;) {
-		loop();
-		if (serialEventRun) serialEventRun();
-	}
+    StartOS(__appMode);
         
 	return 0;
 }
