@@ -19,7 +19,12 @@
 */
 
 #include <Arduino.h>
+// START TRAMPOLINE SECTION 
 #include "tpl_os_os.h" //AppModeType, OSDEFAULTAPPMODE
+extern "C" {
+	void tpl_init_external_interrupts();
+}
+// STOP TRAMPOLINE SECTION 
 
 // Declared weak in Arduino.h to allow user redefinitions.
 int atexit(void (* /*func*/ )()) { return 0; }
@@ -31,6 +36,8 @@ void initVariant() { }
 
 void setupUSB() __attribute__((weak));
 void setupUSB() { }
+
+// START TRAMPOLINE SECTION 
 static AppModeType __appMode = OSDEFAULTAPPMODE;
 
 /** insert a 'new' service to define the application mode
@@ -40,6 +47,7 @@ void SetAppMode(AppModeType appMode)
 {
 	__appMode = appMode;
 }
+// STOP TRAMPOLINE SECTION 
 
 int main(void)
 {
@@ -51,9 +59,20 @@ int main(void)
 	USBDevice.attach();
 #endif
 	
+// START TRAMPOLINE SECTION 
+	tpl_init_external_interrupts();
+// STOP TRAMPOLINE SECTION 
 	setup();
     
+// START TRAMPOLINE SECTION 
     StartOS(__appMode);
+// STOP TRAMPOLINE SECTION
+// START REMOVE TRAMPOLINE SECTION 
+//	for (;;) {
+//		loop();
+//		if (serialEventRun) serialEventRun();
+//	} 
+// STOP REMOVE TRAMPOLINE SECTION 
         
 	return 0;
 }
