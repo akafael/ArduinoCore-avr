@@ -55,6 +55,20 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_start()
 #endif
 }
 
+/* Serial.write with care of the overflow */
+uint8_t serialWrite(uint8_t data)
+{
+	uint8_t result;
+	if(Serial.availableForWrite())
+	{
+		Serial.write(data);
+		result = 0;
+	} else {
+		result = 0;
+	}
+	return result;
+}
+
 /**
  * Trace ends (close the file for instance). This event is sent by
  * ShutdownOS() system call
@@ -63,6 +77,48 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_start()
 extern "C" FUNC(void, OS_CODE) tpl_trace_close()
 {
 
+}
+
+/**
+* Overflow. there are too many trace messages and the trace subsystem
+* cannot handle all this stuff.
+* we just flush the fifo and send a trace overflow message. There will
+* be lost trace messages.
+* NOTE: ***** the system should be able to send 5 bytes at minimum *****
+* (the TX serial line fifo should be > 5 bytes).
+*
+*/
+FUNC(void, OS_CODE) tpl_trace_overflow()
+{
+  const tpl_tick ts=tpl_trace_get_timestamp();
+  tpl_trace_start();
+#  if TRACE_FORMAT == TRACE_FORMAT_SERIAL
+  //there was an overflow, first flush the serial line
+  //we do not generate any overflow here of course
+  //to prevent recursive calls.
+  //
+  //in Arduino, we cannot empty the Serial line
+  //we have to wait for the end of transmission...
+  //however, at last one message is not completed.
+  Serial.flush();
+  /* TTT 00000 (Type) */
+  uint8_t byte = OVERFLOW << 5;
+  uint8_t chksum = byte;
+  Serial.write(byte);
+
+  byte = ts >> 8;
+  chksum += byte;
+  Serial.write(byte);
+
+  byte = ts & 0xff;
+  chksum += byte;
+  Serial.write(byte);
+  
+  Serial.write(0); //no data
+  Serial.write(chksum);
+#  else
+#    error "unsupported trace mode: TRACE_FORMAT"
+#  endif /* TRACE_FORMAT == TRACE_FORMAT_SERIAL */
 }
 
 /**
@@ -80,21 +136,23 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_proc_change_state(
   /* TTT 00 SSS (Type, State) */
   uint8_t byte = PROC_TYPE<<5 | target_state;
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = proc_id & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -116,21 +174,23 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_res_change_state(
   /* TTT 00 00S (Type, State) */
   uint8_t byte = (RES_TYPE<<5) | (target_state & 1);
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = res_id & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -151,21 +211,23 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_time_obj_change_state(
   /* TTT K0 SSS (Type, Kind, State) */
   uint8_t byte = TIMEOBJ_TYPE<<5 | TIMEOBJ_CHANGE_STATE_KIND <<4 | target_state;
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = timeobj_id & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -185,21 +247,23 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_time_obj_expire(
   /* TTT K0000 (Type, Kind) */
   uint8_t byte = TIMEOBJ_TYPE<<5 | TIMEOBJ_EXPIRE_KIND <<4;
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = timeobj_id & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -221,22 +285,24 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_set(
   /* TTT EEEEE (Type, Event) */
   uint8_t byte = EVENT_TYPE<<5 | (event & 0x1F);
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   //TODO: limited to 128 tasks
   byte = (EVENT_SET_KIND << 7) | (task_target_id & 0x7f); 
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -257,21 +323,23 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_reset(
   /* TTT EEEEE (Type, Event) */
   uint8_t byte = EVENT_TYPE<<5 | (event & 0x1F);
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = EVENT_RESET_KIND << 7; 
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -293,21 +361,23 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_msg_send(
   /* TTT MMMMM (Type, Message) */
   uint8_t byte = MESSAGE_TYPE << 5 | (mess_id & 0x1F);
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
   
   byte = (uint8_t)is_zero_message; 
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 #  else
 #    error "unsupported trace mode: TRACE_FORMAT"
 #  endif /* TRACE_FORMAT == TRACE_FORMAT_SERIAL */
@@ -326,21 +396,23 @@ FUNC(void, OS_CODE) tpl_trace_msg_receive(
   /* TTT MMMMM (Type, Message) */
   uint8_t byte = MESSAGE_TYPE << 5 | (mess_id & 0x1F);
   uint8_t chksum = byte;
-  Serial.write(byte);
+  uint8_t overflow = 0;
+  overflow |= serialWrite(byte);
 
   byte = ts >> 8;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
   byte = ts & 0xff;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
   
   byte = (uint8_t)MESSAGE_RECEIVE_KIND;
   chksum += byte;
-  Serial.write(byte);
+  overflow |= serialWrite(byte);
 
-  Serial.write(chksum);
+  overflow |= serialWrite(chksum);
+  if(overflow) tpl_trace_overflow();
 #  else
 #    error "unsupported trace mode: TRACE_FORMAT"
 #  endif /* TRACE_FORMAT == TRACE_FORMAT_SERIAL */
