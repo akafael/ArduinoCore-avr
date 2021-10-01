@@ -44,7 +44,12 @@ FUNC(tpl_tick, OS_CODE) tpl_trace_get_timestamp()
 extern "C" FUNC(void, OS_CODE) tpl_trace_start()
 {
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
-  Serial.begin(115200); //115200 bps, 8N1
+  static uint8_t serialIsInit = 0;
+  if(!serialIsInit) {
+	Serial.begin(115200); //115200 bps, 8N1
+	while(!Serial);
+	serialIsInit = 1;
+  }
 # else
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
@@ -73,7 +78,7 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_proc_change_state(
   tpl_trace_start();
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
   /* TTT 00 SSS (Type, State) */
-  uint8_t byte = PROC_CHANGE_STATE<<5 | target_state;
+  uint8_t byte = PROC_TYPE<<5 | target_state;
   uint8_t chksum = byte;
   Serial.write(byte);
 
@@ -99,7 +104,7 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_proc_change_state(
 * trace the lock of a resource by an entity
 * ** Function defined in os/tpl_trace.h **
 * @param res_id       identifier of the locked resource
-* @param target_state identifier of the locked resource
+* @param target_state new state of the resource (RESOURCE_FREE / RESOURCE_TAKEN)
 */
 extern "C" FUNC(void, OS_CODE) tpl_trace_res_change_state(
     CONST(tpl_resource_id, AUTOMATIC)   res_id,
@@ -108,8 +113,8 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_res_change_state(
   const tpl_tick ts=tpl_trace_get_timestamp();
   tpl_trace_start();
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
-  /* TTT 00 SSS (Type, State) */
-  uint8_t byte = RES_CHANGE_STATE<<5 | target_state;
+  /* TTT 00 00S (Type, State) */
+  uint8_t byte = (RES_TYPE<<5) | (target_state & 1);
   uint8_t chksum = byte;
   Serial.write(byte);
 
@@ -143,8 +148,8 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_time_obj_change_state(
   const tpl_tick ts=tpl_trace_get_timestamp();
   tpl_trace_start();
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
-  /* TTT 00 SSS (Type, State) */
-  uint8_t byte = TIMEOBJ_CHANGE_STATE<<5 | target_state;
+  /* TTT K0 SSS (Type, Kind, State) */
+  uint8_t byte = TIMEOBJ_TYPE<<5 | TIMEOBJ_CHANGE_STATE_KIND <<4 | target_state;
   uint8_t chksum = byte;
   Serial.write(byte);
 
@@ -177,8 +182,8 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_time_obj_expire(
   const tpl_tick ts=tpl_trace_get_timestamp();
   tpl_trace_start();
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
-  /* TTT 00000 (Type) */
-  uint8_t byte = TIMEOBJ_EXPIRE<<5;
+  /* TTT K0000 (Type, Kind) */
+  uint8_t byte = TIMEOBJ_TYPE<<5 | TIMEOBJ_EXPIRE_KIND <<4;
   uint8_t chksum = byte;
   Serial.write(byte);
 
@@ -214,7 +219,7 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_set(
   tpl_trace_start();
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
   /* TTT EEEEE (Type, Event) */
-  uint8_t byte = EVENT_SET<<5 | (event & 0x1F);
+  uint8_t byte = EVENT_TYPE<<5 | (event & 0x1F);
   uint8_t chksum = byte;
   Serial.write(byte);
 
@@ -226,7 +231,8 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_set(
   chksum += byte;
   Serial.write(byte);
 
-  byte = task_target_id & 0xff;
+  //TODO: limited to 128 tasks
+  byte = (EVENT_SET_KIND << 7) | (task_target_id & 0x7f); 
   chksum += byte;
   Serial.write(byte);
 
@@ -249,7 +255,7 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_reset(
   tpl_trace_start();
 # if TRACE_FORMAT == TRACE_FORMAT_SERIAL
   /* TTT EEEEE (Type, Event) */
-  uint8_t byte = EVENT_RESET<<5 | (event & 0x1F);
+  uint8_t byte = EVENT_TYPE<<5 | (event & 0x1F);
   uint8_t chksum = byte;
   Serial.write(byte);
 
@@ -261,7 +267,7 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_reset(
   chksum += byte;
   Serial.write(byte);
 
-  byte = 0;
+  byte = EVENT_RESET_KIND << 7; 
   chksum += byte;
   Serial.write(byte);
 
@@ -270,6 +276,77 @@ extern "C" FUNC(void, OS_CODE) tpl_trace_event_reset(
 #  error "unsupported trace mode: TRACE_FORMAT"
 #endif
 }
+
+/**
+* trace the COM message:
+* - when a message is sent
+*
+*/
+#if WITH_COM == YES
+extern "C" FUNC(void, OS_CODE) tpl_trace_msg_send(
+    CONST(tpl_message_id, AUTOMATIC)   mess_id,
+    CONST(tpl_bool,AUTOMATIC)          is_zero_message)
+{
+  const tpl_tick ts=tpl_trace_get_timestamp();
+  tpl_trace_start();
+#  if TRACE_FORMAT == TRACE_FORMAT_SERIAL
+  /* TTT MMMMM (Type, Message) */
+  uint8_t byte = MESSAGE_TYPE << 5 | (mess_id & 0x1F);
+  uint8_t chksum = byte;
+  Serial.write(byte);
+
+  byte = ts >> 8;
+  chksum += byte;
+  Serial.write(byte);
+
+  byte = ts & 0xff;
+  chksum += byte;
+  Serial.write(byte);
+  
+  byte = (uint8_t)is_zero_message; 
+  chksum += byte;
+  Serial.write(byte);
+
+  Serial.write(chksum);
+#  else
+#    error "unsupported trace mode: TRACE_FORMAT"
+#  endif /* TRACE_FORMAT == TRACE_FORMAT_SERIAL */
+}
+/**
+* trace the message:
+* - when a message is received 
+*
+*/
+FUNC(void, OS_CODE) tpl_trace_msg_receive(
+    VAR(tpl_message_id, AUTOMATIC) mess_id)
+{
+  const tpl_tick ts=tpl_trace_get_timestamp();
+  tpl_trace_start();
+#  if TRACE_FORMAT == TRACE_FORMAT_SERIAL
+  /* TTT MMMMM (Type, Message) */
+  uint8_t byte = MESSAGE_TYPE << 5 | (mess_id & 0x1F);
+  uint8_t chksum = byte;
+  Serial.write(byte);
+
+  byte = ts >> 8;
+  chksum += byte;
+  Serial.write(byte);
+
+  byte = ts & 0xff;
+  chksum += byte;
+  Serial.write(byte);
+  
+  byte = (uint8_t)MESSAGE_RECEIVE_KIND;
+  chksum += byte;
+  Serial.write(byte);
+
+  Serial.write(chksum);
+#  else
+#    error "unsupported trace mode: TRACE_FORMAT"
+#  endif /* TRACE_FORMAT == TRACE_FORMAT_SERIAL */
+}
+#endif /* WITH_COM == YES */
+
 
 #define OS_STOP_SEC_CODE
 #include "tpl_memmap.h"
