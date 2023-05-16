@@ -1,0 +1,3 @@
+[submodule "libraries/mcp_can/src"]
+	path = libraries/mcp_can/src
+	url = git@github.com:akafael/MCP_CAN_lib.git
